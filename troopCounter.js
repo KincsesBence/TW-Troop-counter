@@ -14,13 +14,30 @@ function createLink(page=1,group=0){
 }
 
 async function init(){
-    renderWindow();
-    loadGroup(0);
+    createWindow();
 }
 
-async function loadGroup(group=0){
-    $('#troops').html('');
-    $('#cnt_village').text('Betöltés...');
+async function createWindow(){
+    loadInit();
+    let startUpWin= /* html */`
+    <h2 style="text-align:center;">Sereg számláló</h2>
+    <p style="text-align:right;"><small>- v2.2 by <font face="" color="red"><b>toldi26</b></font></small></p>
+    <div id="counter-loading" style="display: inline-flex;justify-content: center;width: 100%;">
+        <img style="height:25px" src="https://dshu.innogamescdn.com/asset/6389cdba/graphic/loading.gif"><span style="padding:5px">Betöltés...</span>
+    </div>
+    <div id="counter-progress" class="progress-bar progress-bar-alive" style="display:none;width: 250px;">
+        <span id="label1" class="label">0 / 0</span>
+        <div id="percent" style="width: 45%" class="full">
+        <span id="label2" class="label" style="width: 250px;">0 / 0</span>
+        </div>
+    </div>
+    <div style="display:grid" id="counter-content">
+    </div>`;
+    Dialog.show("win_troop_count",startUpWin);
+}
+
+async function loadInit(group=0){
+    $('#counter-loading span').text('Csoportok Betöltése...');
     villages=0;
     selectedGroup=group;
     army={home:{},onWay:{},inSupp:{},all:{}};
@@ -29,10 +46,50 @@ async function loadGroup(group=0){
     let result = await $.ajax({url: createLink(0,group)});
     fetchUnitTypes(result); 
     fetchGroups(result);
+    $('#counter-loading').hide();
+    $('#counter-progress').hide();
+
+    let selector= /* html */`
+        <h4 style="text-align:center;">Csoport kiválasztása:</h4>
+        <select id="counter-preselect" style="width: fit-content; margin:10px auto;font-size: 16px;">
+            ${groups.map((group)=>{
+                return /* html */`<option ${group.value==0 ? "selected":""}  value="${group.value}">${group.text}</option>`
+            })}
+        </select>
+        <button onclick="loadSelected()" style="width: fit-content; margin:10px auto" class="btn">Kiválaszt</button>
+    `;
+
+    $('#counter-content').html(selector);
+}
+
+window.loadSelected = () =>{
+    let group = parseInt($('#counter-preselect').val());
+    loadGroup(group);
+    $('#counter-content').html('');
+}
+
+function setProgress(current,max){
+    $('#label1').text(`${current} / ${max}`);
+    $('#label2').text(`${current} / ${max}`);
+    $('#percent').css('width',`${current/max*100}%`);
+}
+
+async function loadGroup(group=0){
+    $('#counter-content').html('');
+    $('#counter-loading').show();
+    $('#counter-loading span').text('Csapatok Betöltése...');
+    villages=0;
+    selectedGroup=group;
+    units=[];
+    groups=[];
+    army={home:{},onWay:{},inSupp:{},all:{}};
+    let result = await $.ajax({url: createLink(0,group)});
+    fetchUnitTypes(result); 
+    fetchGroups(result);
     appendToArmy(result);
-    if(pageCnt>0){
-        window.top.UI.InfoMessage(1+'/'+pageCnt);
-    }
+    $('#counter-progress').show();
+    setProgress(1,pageCnt);
+
     var promises = [];
 
     for (let i = 1; i < pageCnt; i++) {
@@ -41,6 +98,9 @@ async function loadGroup(group=0){
         );
     }
     await Promise.allSettled(promises).then((results) => results.forEach((result) => appendToArmy(result.value)));
+    $('#counter-loading').hide();
+    $('#counter-progress').hide();
+    renderTable();
     renderTroops(selectedFilter);
 }
 
@@ -78,7 +138,7 @@ function pageRequestDelayed(url,delay){
     return new Promise( async (resolve,reject)=>{
         setTimeout(async ()=>{
             if(!canceled){
-                window.top.UI.InfoMessage(delay+1+'/'+pageCnt);
+                setProgress(delay+1,pageCnt);
                 let result = await $.ajax({url: url});
                 resolve(result);
             }
@@ -99,7 +159,6 @@ function fetchUnitTypes(html){
             });
         }
     });
-
     console.log(units);
 }
 
@@ -109,15 +168,30 @@ function getUnitNameFromUrl(url){
 }
 
 function fetchGroups(html){
-    let groups=[];
+    groups=[];
     let groupsHtml = $(html).find('.group-menu-item').get();
-    groupsHtml.forEach(group => {
-        groups.push({
-            text:$(group).text().trim().slice(1,-1),
-            value:$(group).attr('data-group-id')
+    if(groupsHtml.length>0){
+        groupsHtml.forEach(group => {
+            groups.push({
+                text:$(group).text().trim().slice(1,-1),
+                value:$(group).attr('data-group-id')
+            });
         });
-    });
+    }else{
+        let groupsHtml = $($(html).find('#paged_view_content').find('select').get()[0]).find('option').get();
+        groupsHtml.forEach(group => {
+            if(!$(group).is(':disabled')){
 
+                let params = new URLSearchParams($(group).attr('value'));
+                console.log(params,$(group).attr('value'));
+                groups.push({
+                    text:$(group).text(),
+                    value:params.get("group")
+                });
+            }
+        });
+    }
+    
     let select=$($(html).find('.paged-nav-item').get()[0]).parent().find('select');
 
     if(select.length==1){
@@ -126,13 +200,6 @@ function fetchGroups(html){
     }else{
         pageCnt = $(html).find('.paged-nav-item').length;
     }
-
-    let groupOptions='';
-    groups.forEach((group)=>{
-        groupOptions+=`<option value="${group.value}" ${selectedGroup==group.value? "selected":""}>${group.text}</option>`;
-    })
-    $('#Groups').html(groupOptions);
-
 }
 
 function renderTroops(filter){
@@ -144,10 +211,10 @@ function renderTroops(filter){
     let max = Math.max(...arr).toString().length+2;
     for (let i = 0; i < units.length; i++) {
         if(i%2==0){
-            table+=`<tr><th style="width:20px"><img src="${units[i].img}"></th><td bgcolor="#fff5da" style="width: calc(50% - 20px)">${army[filter][units[i].name]}</td>`;
+            table+=`<tr><th style="width:20px"><img style="width:20px" src="${units[i].img}"></th><td bgcolor="#fff5da" style="width: calc(50% - 20px)">${army[filter][units[i].name]}</td>`;
             clipBoard+=`[unit]${units[i].name}[/unit] ${army[filter][units[i].name].toString().padEnd(max,'\u2007')}`;
         }else{
-            table+=`<th style="width:20px"><img src="${units[i].img}"></th><td bgcolor="#fff5da" style="width: calc(50% - 20px)">${army[filter][units[i].name]}</td></tr>`;
+            table+=`<th style="width:20px"><img style="width:20px" src="${units[i].img}"></th><td bgcolor="#fff5da" style="width: calc(50% - 20px)">${army[filter][units[i].name]}</td></tr>`;
             clipBoard+=`[unit]${units[i].name}[/unit] ${army[filter][units[i].name]}\n`;
         }
     }
@@ -155,46 +222,30 @@ function renderTroops(filter){
     $('#troops').html(table);
 }
 
-function copyToClipBoard(isWebview){
-    if(isWebview){
+function copyToClipBoard(){
+    navigator.clipboard.writeText(clipBoard).then(()=>{
+        window.top.UI.InfoMessage('A csapatok a vágólapra lettek másolva');
+    }).catch(()=>{
         $('#textarea-copy').find('textarea').html(clipBoard);
         $('#textarea-copy').show();
-    }else{
-        navigator.clipboard.writeText(clipBoard).then(()=>{
-            window.top.UI.InfoMessage('A csapatok a vágólapra lettek másolva');
-        }).catch(()=>{
-            $('#textarea-copy').find('textarea').html(clipBoard);
-            $('#textarea-copy').show();
-        })
-    }
+    })
 }
 
 $('.popup_box_close').on('click',()=>{
     canceled=true;
-})
+});
 
-function checkAgent(){
-    let navigator = window.navigator;
-    let userAgent = navigator.userAgent;
-    let normalizedUserAgent = userAgent.toLowerCase();
-    let standalone = navigator.standalone;
-    let isIos = /ip(ad|hone|od)/.test(normalizedUserAgent);
-    let isAndroid = /android/.test(normalizedUserAgent);
-    let isSafari = /safari/.test(normalizedUserAgent);
-    let isWebview = (isAndroid && /; wv\)/.test(normalizedUserAgent)) || (isIos && !standalone && !isSafari);
-    return isWebview;
-}
-
-function renderWindow(){
-    let isWebview=checkAgent();
-    let win=`<h2 align="center">Sereg számláló</h2>
-    <p align="right"><small>- v2.0 by <font face="" color="red"><b>toldi26</b></font></small></p>
+function renderTable(){
+    let win= /* html */`
     <table width="100%">
         <tbody>
             <tr>
-                <th>
+                <th style="text-align:center;">
                 Csoportok: 
                 <select value="0" id="Groups" onchange="loadGroup(this.value);">
+                    ${groups.map((group)=>{
+                        return /* html */`<option ${group.value==selectedGroup ? "selected":""}  value="${group.value}">${group.text}</option>`
+                    })}
                 </select>
                 </th>
             </tr>
@@ -203,7 +254,7 @@ function renderWindow(){
                     <table width="100%">
                         <tbody>
                             <tr>
-                                <th colspan="4">Szűrés: <select onchange="renderTroops(this.value);">
+                                <th style="text-align:center;" colspan="4">Szűrés: <select onchange="renderTroops(this.value);">
                                         <option value="home">Rendelkezésre álló</option>
                                         <option value="all">Összes csapat</option>
                                         <option value="inSupp">Támogatásban</option>
@@ -219,14 +270,15 @@ function renderWindow(){
             </tr>
             <tr>
                 <th><b id="cnt_village">Betöltés...</b><a href="#" style="float: right;"
-                        onclick="copyToClipBoard(${isWebview ?'true':'false'});">${isWebview ?'Másolás':'Vágólapra'}</a></th>
+                        onclick="copyToClipBoard();">Másolás</a></th>
             </tr>
             <tr id="textarea-copy" style="display:none;">
                 <td>
-                <textarea style="height:100px;width:96%;resize: none;"></textarea>
+                <textarea onclick="this.focus();this.select()" readonly="readonly"
+                style="height:100px;width:96%;resize: none;"></textarea>
                 </td>
             </tr>
         </tbody>
-    </table>`
-    Dialog.show("win_troop_count",win);
+    </table>`;
+    $('#counter-content').html(win);
 }
